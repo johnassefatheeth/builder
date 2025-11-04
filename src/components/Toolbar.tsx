@@ -18,6 +18,8 @@ export const Toolbar: React.FC<ToolbarProps> = ({ sceneManager }) => {
   const [hollow, setHollow] = useState(false);
   const [snapToGrid, setSnapToGrid] = useState(true);
   const [gridSize, setGridSize] = useState(0.5);
+  const [selectedSketchTool, setSelectedSketchTool] = useState<string | null>(null);
+  const [polygonSides, setPolygonSides] = useState<number>(5);
 
   // Handler functions remain the same as your original
   const handleCreateBox = () => {
@@ -62,19 +64,28 @@ export const Toolbar: React.FC<ToolbarProps> = ({ sceneManager }) => {
     addObject(plane);
   };
 
-  const handleToggleSketchMode = (tool: "rectangle" | "circle") => {
+  const handleToggleSketchMode = (tool: "rectangle" | "circle" | "triangle" | "ellipse" | "polygon") => {
     if (!sceneManager) return;
-    if (mode === "SKETCH") {
+    // Toggle off when clicking the active tool
+    if (mode === "SKETCH" && selectedSketchTool === tool) {
       setMode("3D");
       sceneManager.sketchManager.disableSketchMode();
+      setSelectedSketchTool(null);
+      return;
+    }
+
+    // apply current sketch options
+    sceneManager.sketchManager.setSnapToGrid(snapToGrid);
+    sceneManager.sketchManager.setGridSize(gridSize);
+    sceneManager.sketchManager.setHollow(hollow);
+    setMode("SKETCH");
+    // pass polygonSides when relevant
+    if (tool === "polygon") {
+      sceneManager.sketchManager.enableSketchMode(tool, hollow, polygonSides);
     } else {
-      // apply current sketch options
-      sceneManager.sketchManager.setSnapToGrid(snapToGrid);
-      sceneManager.sketchManager.setGridSize(gridSize);
-      sceneManager.sketchManager.setHollow(hollow);
-      setMode("SKETCH");
       sceneManager.sketchManager.enableSketchMode(tool, hollow);
     }
+    setSelectedSketchTool(tool);
   };
 
   const toggleSnapToGrid = () => {
@@ -272,26 +283,47 @@ export const Toolbar: React.FC<ToolbarProps> = ({ sceneManager }) => {
       groups: [
         {
           name: "Sketch Tools",
-          tools: [
+            tools: [
             { 
               type: "button", 
               label: "▭ Rectangle", 
               title: "Sketch Rectangle", 
               onClick: () => handleToggleSketchMode("rectangle"),
-              active: mode === "SKETCH"
+              active: selectedSketchTool === "rectangle"
             },
             { 
               type: "button", 
               label: "⭕ Circle", 
               title: "Sketch Circle", 
               onClick: () => handleToggleSketchMode("circle"),
-              active: mode === "SKETCH"
+              active: selectedSketchTool === "circle"
             },
+            { 
+              type: "button", 
+              label: "🔺 Triangle", 
+              title: "Sketch Triangle", 
+              onClick: () => handleToggleSketchMode("triangle"),
+              active: selectedSketchTool === "triangle"
+            },
+            { 
+              type: "button", 
+              label: "◯ Ellipse", 
+              title: "Sketch Ellipse", 
+              onClick: () => handleToggleSketchMode("ellipse"),
+              active: selectedSketchTool === "ellipse"
+            },
+            {
+              type: "button",
+              label: "🔷 Polygon",
+              title: "Sketch Polygon",
+              onClick: () => handleToggleSketchMode("polygon"),
+              active: selectedSketchTool === "polygon"
+            }
           ]
         },
         {
           name: "Sketch Options",
-          tools: [
+            tools: [
             {
               type: "toggle",
               label: hollow ? "🕳️ Hollow On" : "⏺️ Hollow Off",
@@ -311,11 +343,29 @@ export const Toolbar: React.FC<ToolbarProps> = ({ sceneManager }) => {
               onClick: () => toggleSnapToGrid()
             },
             {
-              type: "button",
+              type: "number",
+              label: `Polygon Sides: ${polygonSides}`,
+              title: "Polygon side count",
+              value: polygonSides,
+              min: 3,
+              max: 12,
+              step: 1,
+              onChange: (v: number) => {
+                const next = Math.max(3, Math.min(12, Math.floor(v)));
+                setPolygonSides(next);
+              }
+            },
+            {
+              type: "number",
               label: `Grid Size: ${gridSize}`,
-              title: "Set grid size",
-              onClick: () => {},
-              // we'll render a number input for grid size instead of prompt via the 'number' tool below
+              title: "Grid size",
+              value: gridSize,
+              min: 0.01,
+              max: 10,
+              step: 0.01,
+              onChange: (v: number) => {
+                changeGridSize(v);
+              }
             }
           ]
         }
@@ -363,9 +413,9 @@ export const Toolbar: React.FC<ToolbarProps> = ({ sceneManager }) => {
   const currentTab = tabs[activeTab as keyof typeof tabs];
 
   return (
-    <div className="bg-gray-900 border-b border-gray-300 shadow-sm">
+    <div className="bg-gray-900 border-b  shadow-sm">
       {/* Tab Navigation */}
-      <div className="flex border-b border-gray-200">
+      <div className="flex border-b ">
         {Object.entries(tabs).map(([key, tab]) => (
           <button
             key={key}
@@ -382,7 +432,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({ sceneManager }) => {
       </div>
 
       {/* Tool Groups */}
-      <div className="px-4 py-3 bg-gray-50 min-h-[72px]">
+      <div className="px-4 py-3 bg-gray-900 min-h-[72px]">
         <div className="flex items-center gap-8">
           {currentTab.groups.map((group, index) => (
             <div key={index} className="flex items-center gap-4">
@@ -475,6 +525,21 @@ export const Toolbar: React.FC<ToolbarProps> = ({ sceneManager }) => {
                           title={tool.title}
                           className="w-10 h-10 rounded border border-gray-300 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed hover:border-gray-400 transition-colors duration-200"
                         />
+                      )}
+                      {tool.type === "number" && (
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="number"
+                            value={(tool as NumberTool).value}
+                            min={(tool as NumberTool).min}
+                            max={(tool as NumberTool).max}
+                            step={(tool as NumberTool).step || 1}
+                            onChange={(e) => (tool as NumberTool).onChange(Number(e.target.value))}
+                            title={tool.title}
+                            className="w-20 px-2 py-1 rounded border border-gray-300 bg-white text-sm"
+                          />
+                          <span className="text-xs text-gray-400">{tool.label}</span>
+                        </div>
                       )}
                     </div>
                   ))}
