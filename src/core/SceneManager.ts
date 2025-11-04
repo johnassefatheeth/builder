@@ -3,7 +3,6 @@ import { OrbitControls } from "three-stdlib";
 import { SelectionManager } from "./SelectionManager";
 import { TransformControlsManager } from "./TransformControlsManager";
 import { SketchManager } from "./SketchManager";
-import { ShapeFactory } from "./ShapeFactory";
 
 export class SceneManager {
   public scene: THREE.Scene;
