@@ -18,6 +18,8 @@ export class SketchManager {
   private currentTool: "rectangle" | "circle" | "triangle" | "ellipse" | "polygon" | null = null;
   private hollow: boolean = false;
   private polygonSides: number = 5;
+  private extrudeEnabled: boolean = false;
+  private extrudeDepth: number = 0.2;
 
   constructor(scene: THREE.Scene, camera: THREE.Camera, orbitControls?: OrbitControls) {
     this.scene = scene;
@@ -189,13 +191,6 @@ export class SketchManager {
     const shape = this.buildShape(start, end);
     if (!shape) return new THREE.Group();
 
-    // Create a flat 2D mesh (ShapeGeometry) instead of an extruded 3D object.
-    // This produces a proper 2D shape lying on the sketch plane.
-    const geometry = new THREE.ShapeGeometry(shape);
-    const material = new THREE.MeshStandardMaterial({
-      color: 0x873217,
-      side: THREE.DoubleSide,
-    });
     const group = new THREE.Group();
 
     if (this.hollow) {
@@ -212,26 +207,151 @@ export class SketchManager {
         line.position.set(start.x, 0.01, start.z);
       }
       group.add(line);
-    } else {
-      const mesh = new THREE.Mesh(geometry, material);
-      // Lay flat on XZ plane (shape is created in XY plane)
-      mesh.rotation.x = -Math.PI / 2;
-
-      // Position the mesh to match the preview behavior
-      if (this.currentTool === "rectangle") {
-        mesh.position.set((start.x + end.x) / 2, 0.01, (start.z + end.z) / 2);
-      } else {
-        // circle: center at start
-        mesh.position.set(start.x, 0.01, start.z);
+      // store a shape representation so this outline can be extruded later
+      try {
+        group.userData = group.userData || {};
+        group.userData.shape2D = shape;
+      } catch (e) {
+        // ignore
       }
+    } else {
+      // Create extruded mesh if enabled, otherwise flat mesh
+      if (this.extrudeEnabled && this.extrudeDepth > 0) {
+        const extrudeSettings: THREE.ExtrudeGeometryOptions = {
+          depth: this.extrudeDepth,
+          bevelEnabled: false,
+        };
+        const geometryExtrude = new THREE.ExtrudeGeometry(shape, extrudeSettings);
+        const materialExtrude = new THREE.MeshStandardMaterial({ color: 0x873217 });
+        const mesh = new THREE.Mesh(geometryExtrude, materialExtrude);
+        // Rotate so extrusion becomes vertical (Y) and lift half depth
+        mesh.rotation.x = -Math.PI / 2;
+        if (this.currentTool === "rectangle") {
+          mesh.position.set((start.x + end.x) / 2, this.extrudeDepth / 2, (start.z + end.z) / 2);
+        } else {
+          mesh.position.set(start.x, this.extrudeDepth / 2, start.z);
+        }
+        group.add(mesh);
+      } else {
+        const geometry = new THREE.ShapeGeometry(shape);
+        const material = new THREE.MeshStandardMaterial({
+          color: 0x873217,
+          side: THREE.DoubleSide,
+        });
+  const mesh = new THREE.Mesh(geometry, material);
+        // Lay flat on XZ plane (shape is created in XY plane)
+        mesh.rotation.x = -Math.PI / 2;
 
-      group.add(mesh);
+        // Position the mesh to match the preview behavior
+        if (this.currentTool === "rectangle") {
+          mesh.position.set((start.x + end.x) / 2, 0.01, (start.z + end.z) / 2);
+        } else {
+          // circle: center at start
+          mesh.position.set(start.x, 0.01, start.z);
+        }
+
+        group.add(mesh);
+        // store the underlying shape so we can extrude later
+        try {
+          group.userData = group.userData || {};
+          group.userData.shape2D = shape;
+        } catch (e) {
+          // noop
+        }
+      }
     }
 
     // mark group so SelectionManager can find it
     group.userData = group.userData || {};
     group.userData.metadata = { tool: this.currentTool };
+    // also store extrude state for convenience
+    group.userData.extruded = this.extrudeEnabled && !!this.extrudeDepth;
+    group.userData.extrudeDepth = this.extrudeDepth;
     return group;
+  }
+
+  /**
+   * Extrude an already-created sketch group (or a uuid that resolves to a group) in-place.
+   * Returns the created Mesh or null on failure.
+   */
+  public extrudeExisting(groupOrUuid: THREE.Group | string, depth?: number): THREE.Mesh | null {
+    let group: THREE.Group | null = null;
+    if (typeof groupOrUuid === "string") {
+      const obj = this.scene.getObjectByProperty("uuid", groupOrUuid) as THREE.Object3D | undefined;
+      if (!obj) return null;
+      // if uuid points to a child mesh, take its parent as the group
+      if ((obj as any).isGroup) group = obj as THREE.Group;
+      else if (obj.parent && (obj.parent as any).isGroup) group = obj.parent as THREE.Group;
+      else return null;
+    } else {
+      group = groupOrUuid;
+    }
+
+    if (!group) return null;
+
+    // obtain a shape from stored userData if available
+    let shape: THREE.Shape | undefined = group.userData?.shape2D as THREE.Shape | undefined;
+
+    // fallback: try to extract from existing mesh geometry parameters
+    if (!shape) {
+      const meshChild = group.children.find((c) => (c as any).isMesh) as THREE.Mesh | undefined;
+      if (meshChild) {
+        const geom: any = (meshChild.geometry as any) || {};
+        // ShapeGeometry often stores the original shapes under parameters.shapes
+        if (geom.parameters && geom.parameters.shapes) {
+          shape = geom.parameters.shapes as THREE.Shape;
+        }
+      }
+    }
+
+    if (!shape) return null;
+
+    const d = typeof depth === "number" ? Math.max(0, depth) : Math.max(0, group.userData?.extrudeDepth ?? this.extrudeDepth);
+
+    // dispose previous children resources
+    for (const child of [...group.children]) {
+      // dispose geometries/materials when applicable
+      const meshc = child as any;
+      if (meshc.geometry) {
+        try {
+          meshc.geometry.dispose();
+        } catch (e) {
+          // ignore
+        }
+      }
+      if (meshc.material) {
+        try {
+          if (Array.isArray(meshc.material)) meshc.material.forEach((m: any) => m.dispose && m.dispose());
+          else meshc.material.dispose && meshc.material.dispose();
+        } catch (e) {
+          // ignore
+        }
+      }
+      group.remove(child);
+    }
+
+    // create extruded geometry from stored shape
+    const extrudeSettings: THREE.ExtrudeGeometryOptions = { depth: d, bevelEnabled: false };
+    const geometryExtrude = new THREE.ExtrudeGeometry(shape, extrudeSettings);
+    const materialExtrude = new THREE.MeshStandardMaterial({ color: 0x873217 });
+    const mesh = new THREE.Mesh(geometryExtrude, materialExtrude);
+    mesh.rotation.x = -Math.PI / 2;
+
+    // place at same XZ as previous child if available, otherwise at origin
+    const prevPos = (group.userData?.lastChildPosition as any) as { x?: number; z?: number } | undefined;
+    if (prevPos && typeof prevPos.x === "number" && typeof prevPos.z === "number") {
+      mesh.position.set(prevPos.x, d / 2, prevPos.z);
+    } else if (group.position) {
+      mesh.position.set(group.position.x, d / 2, group.position.z);
+    } else {
+      mesh.position.set(0, d / 2, 0);
+    }
+
+    group.add(mesh);
+    group.userData.extruded = true;
+    group.userData.extrudeDepth = d;
+    group.userData.shape2D = shape;
+    return mesh;
   }
 
   /** Build outline points in XY plane for hollow shapes */
@@ -412,6 +532,14 @@ export class SketchManager {
 
   setHollow(h: boolean) {
     this.hollow = h;
+  }
+
+  setExtrude(enabled: boolean) {
+    this.extrudeEnabled = enabled;
+  }
+
+  setExtrudeDepth(depth: number) {
+    this.extrudeDepth = Math.max(0, depth);
   }
 
   private clearPreview(): void {

@@ -20,6 +20,8 @@ export const Toolbar: React.FC<ToolbarProps> = ({ sceneManager }) => {
   const [gridSize, setGridSize] = useState(0.5);
   const [selectedSketchTool, setSelectedSketchTool] = useState<string | null>(null);
   const [polygonSides, setPolygonSides] = useState<number>(5);
+  const [extrudeEnabled, setExtrudeEnabled] = useState<boolean>(false);
+  const [extrudeDepth, setExtrudeDepth] = useState<number>(0.2);
 
   // Handler functions remain the same as your original
   const handleCreateBox = () => {
@@ -74,10 +76,12 @@ export const Toolbar: React.FC<ToolbarProps> = ({ sceneManager }) => {
       return;
     }
 
-    // apply current sketch options
-    sceneManager.sketchManager.setSnapToGrid(snapToGrid);
-    sceneManager.sketchManager.setGridSize(gridSize);
-    sceneManager.sketchManager.setHollow(hollow);
+  // apply current sketch options
+  sceneManager.sketchManager.setSnapToGrid(snapToGrid);
+  sceneManager.sketchManager.setGridSize(gridSize);
+  sceneManager.sketchManager.setHollow(hollow);
+  sceneManager.sketchManager.setExtrude(extrudeEnabled);
+  sceneManager.sketchManager.setExtrudeDepth(extrudeDepth);
     setMode("SKETCH");
     // pass polygonSides when relevant
     if (tool === "polygon") {
@@ -160,6 +164,31 @@ export const Toolbar: React.FC<ToolbarProps> = ({ sceneManager }) => {
 
   const handleTransformMode = (mode: "translate" | "rotate" | "scale") => {
     setTransformMode(mode);
+  };
+
+  const handleExtrudeSelected = () => {
+    if (!sceneManager) return;
+    const sel = useSceneStore.getState().selected;
+    if (!sel || !sel.object) {
+      alert("No object selected to extrude.");
+      return;
+    }
+
+    // resolve a Group reference from the selection (selection may be a child mesh)
+    let targetGroup: THREE.Group | null = null;
+    const obj = sel.object as THREE.Object3D;
+    if ((obj as any).isGroup) targetGroup = obj as THREE.Group;
+    else if (obj.parent && (obj.parent as any).isGroup) targetGroup = obj.parent as THREE.Group;
+    if (!targetGroup) {
+      alert("Selected object cannot be extruded (not a sketch group).");
+      return;
+    }
+
+    // attempt extrusion using the SketchManager API
+    const result = sceneManager.sketchManager.extrudeExisting(targetGroup, extrudeDepth);
+    if (!result) {
+      alert("Extrusion failed: selected object has no stored 2D shape to extrude.");
+    }
   };
 
   const applyViewMode = (mode: "wireframe" | "default" | "realistic") => {
@@ -337,6 +366,17 @@ export const Toolbar: React.FC<ToolbarProps> = ({ sceneManager }) => {
             },
             {
               type: "toggle",
+              label: extrudeEnabled ? "⬆️ Extrude On" : "⬇️ Extrude Off",
+              title: "Toggle Extrude",
+              active: extrudeEnabled,
+              onClick: () => {
+                const next = !extrudeEnabled;
+                setExtrudeEnabled(next);
+                if (sceneManager) sceneManager.sketchManager.setExtrude(next);
+              }
+            },
+            {
+              type: "toggle",
               label: snapToGrid ? "� Snap On" : "▫️ Snap Off",
               title: "Toggle Snap-to-Grid",
               active: snapToGrid,
@@ -366,6 +406,29 @@ export const Toolbar: React.FC<ToolbarProps> = ({ sceneManager }) => {
               onChange: (v: number) => {
                 changeGridSize(v);
               }
+            }
+            ,
+            {
+              type: "number",
+              label: `Extrude Depth: ${extrudeDepth}`,
+              title: "Extrude depth",
+              value: extrudeDepth,
+              min: 0.01,
+              max: 5,
+              step: 0.01,
+              onChange: (v: number) => {
+                const next = Math.max(0, v);
+                setExtrudeDepth(next);
+                if (sceneManager) sceneManager.sketchManager.setExtrudeDepth(next);
+              }
+            }
+            ,
+            {
+              type: "button",
+              label: "⬆️ Extrude Selected",
+              title: "Extrude the selected sketch",
+              onClick: handleExtrudeSelected,
+              disabled: !selected?.object
             }
           ]
         }
