@@ -15,7 +15,7 @@ export class SketchManager {
   private mouse: THREE.Vector2;
   private snapToGrid: boolean = true;
   private gridSize: number = 0.5;
-  private currentTool: "rectangle" | "circle" | "triangle" | null = null;
+  private currentTool: "rectangle" | "circle" | null = null;
   private hollow: boolean = false;
 
   constructor(scene: THREE.Scene, camera: THREE.Camera, orbitControls?: OrbitControls) {
@@ -37,12 +37,13 @@ export class SketchManager {
     this.sketchPlane.rotation.x = -Math.PI / 2;
     this.sketchPlane.visible = false;
 
-    // Grid helper
-    this.gridHelper = new THREE.GridHelper(100, 200, 0x444444, 0x888888);
+    // Grid helper (divisions based on gridSize)
+    const divisions = Math.max(10, Math.round(100 / this.gridSize));
+    this.gridHelper = new THREE.GridHelper(100, divisions, 0x444444, 0x888888);
     this.gridHelper.visible = false;
   }
 
-  enableSketchMode(tool: "rectangle" | "circle" | "triangle", hollow: boolean = false): void {
+  enableSketchMode(tool: "rectangle" | "circle", hollow: boolean = false): void {
     this.currentTool = tool;
     this.hollow = hollow;
     this.sketchPlane.visible = true;
@@ -147,18 +148,6 @@ export class SketchManager {
         0.01,
         (start.z + end.z) / 2
       );
-    } else if (this.currentTool === "triangle") {
-      const base = Math.abs(end.x - start.x) || Math.abs(end.z - start.z) || 1;
-      const height = Math.abs(end.z - start.z) || base;
-      const shape = new THREE.Shape();
-      shape.moveTo(-base / 2, -height / 2);
-      shape.lineTo(base / 2, -height / 2);
-      shape.lineTo(0, height / 2);
-      shape.lineTo(-base / 2, -height / 2);
-      const geometry = new THREE.ShapeGeometry(shape);
-      this.previewMesh = new THREE.Mesh(geometry, previewMaterial);
-      this.previewMesh.rotation.x = -Math.PI / 2;
-      this.previewMesh.position.set((start.x + end.x) / 2, 0.01, (start.z + end.z) / 2);
     } else if (this.currentTool === "circle") {
       const radius = start.distanceTo(end);
       const geometry = new THREE.CircleGeometry(radius, 32);
@@ -196,25 +185,6 @@ export class SketchManager {
         hole.lineTo(-width / 2 + insetX, -depth / 2 + insetZ);
         shape.holes = [hole];
       }
-    } else if (this.currentTool === "triangle") {
-      const base = Math.abs(end.x - start.x) || Math.abs(end.z - start.z) || 1;
-      const height = Math.abs(end.z - start.z) || base;
-      shape = new THREE.Shape();
-      shape.moveTo(-base / 2, -height / 2);
-      shape.lineTo(base / 2, -height / 2);
-      shape.lineTo(0, height / 2);
-      shape.lineTo(-base / 2, -height / 2);
-
-      if (this.hollow) {
-        const insetB = Math.max(base * 0.12, 0.01);
-        const insetH = Math.max(height * 0.12, 0.01);
-        const hole = new THREE.Path();
-        hole.moveTo(-base / 2 + insetB, -height / 2 + insetH);
-        hole.lineTo(base / 2 - insetB, -height / 2 + insetH);
-        hole.lineTo(0, height / 2 - insetH);
-        hole.lineTo(-base / 2 + insetB, -height / 2 + insetH);
-        shape.holes = [hole];
-      }
     } else {
       const radius = start.distanceTo(end);
       shape = new THREE.Shape();
@@ -238,6 +208,25 @@ export class SketchManager {
     extrudedShape.rotation.x = -Math.PI / 2;
 
     return extrudedShape;
+  }
+
+  // Public API to control grid snapping
+  setSnapToGrid(enabled: boolean) {
+    this.snapToGrid = enabled;
+  }
+
+  setGridSize(size: number) {
+    this.gridSize = Math.max(0.01, size);
+    const divisions = Math.max(10, Math.round(100 / this.gridSize));
+    // recreate helper to update divisions
+    this.scene.remove(this.gridHelper);
+    this.gridHelper = new THREE.GridHelper(100, divisions, 0x444444, 0x888888);
+    this.gridHelper.visible = !!this.currentTool;
+    this.scene.add(this.gridHelper);
+  }
+
+  setHollow(h: boolean) {
+    this.hollow = h;
   }
 
   private clearPreview(): void {

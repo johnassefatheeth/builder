@@ -20,7 +20,7 @@ export class SceneManager {
   constructor(canvas: HTMLCanvasElement) {
     // Scene
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0xf0f0f0);
+    this.scene.background = new THREE.Color(0x343434);
 
     // Camera
     this.camera = new THREE.PerspectiveCamera(

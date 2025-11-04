@@ -14,7 +14,12 @@ export const Toolbar: React.FC<ToolbarProps> = ({ sceneManager }) => {
   const { mode, setMode, addObject, clearObjects, setTransformMode, selected, viewMode } =
     useSceneStore();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [activeTab, setActiveTab] = useState<string>("home");
+  const [hollow, setHollow] = useState(false);
+  const [snapToGrid, setSnapToGrid] = useState(true);
+  const [gridSize, setGridSize] = useState(0.5);
 
+  // Handler functions remain the same as your original
   const handleCreateBox = () => {
     if (!sceneManager) return;
     const box = ShapeFactory.createBox(1, 1, 1);
@@ -57,17 +62,31 @@ export const Toolbar: React.FC<ToolbarProps> = ({ sceneManager }) => {
     addObject(plane);
   };
 
-  const [hollow, setHollow] = useState(false);
-
-  const handleToggleSketchMode = (tool: "rectangle" | "circle" | "triangle") => {
+  const handleToggleSketchMode = (tool: "rectangle" | "circle") => {
     if (!sceneManager) return;
     if (mode === "SKETCH") {
       setMode("3D");
       sceneManager.sketchManager.disableSketchMode();
     } else {
+      // apply current sketch options
+      sceneManager.sketchManager.setSnapToGrid(snapToGrid);
+      sceneManager.sketchManager.setGridSize(gridSize);
+      sceneManager.sketchManager.setHollow(hollow);
       setMode("SKETCH");
       sceneManager.sketchManager.enableSketchMode(tool, hollow);
     }
+  };
+
+  const toggleSnapToGrid = () => {
+    const next = !snapToGrid;
+    setSnapToGrid(next);
+    if (sceneManager) sceneManager.sketchManager.setSnapToGrid(next);
+  };
+
+  const changeGridSize = (size: number) => {
+    const next = Math.max(0.01, size);
+    setGridSize(next);
+    if (sceneManager) sceneManager.sketchManager.setGridSize(next);
   };
 
   const handleUndo = () => {
@@ -82,7 +101,6 @@ export const Toolbar: React.FC<ToolbarProps> = ({ sceneManager }) => {
 
   const handleClearAll = () => {
     if (!sceneManager) return;
-    // ask store to clear all and update scene
     useSceneStore.getState().clearAll(sceneManager);
   };
 
@@ -111,12 +129,10 @@ export const Toolbar: React.FC<ToolbarProps> = ({ sceneManager }) => {
       const jsonData = await SceneImporter.loadFromFile(file);
       const objects = SceneImporter.importScene(jsonData);
 
-      // Clear existing objects
       const currentObjects = useSceneStore.getState().objects;
       currentObjects.forEach((obj) => sceneManager.removeShape(obj));
       clearObjects();
 
-      // Add imported objects
       objects.forEach((obj) => {
         sceneManager.addShape(obj);
         addObject(obj);
@@ -126,7 +142,6 @@ export const Toolbar: React.FC<ToolbarProps> = ({ sceneManager }) => {
       alert("Failed to import scene. Please check the file format.");
     }
 
-    // Reset file input
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
     }
@@ -137,304 +152,347 @@ export const Toolbar: React.FC<ToolbarProps> = ({ sceneManager }) => {
   };
 
   const applyViewMode = (mode: "wireframe" | "default" | "realistic") => {
-    // update global store
     useSceneStore.getState().setViewMode(mode);
     if (!sceneManager) return;
     sceneManager.setViewMode(mode);
   };
 
-  return (
-    <div className="bg-slate-800 text-white px-4 py-3 shadow-lg">
-      <div className="flex flex-wrap gap-6">
-        {/* Create Primitives Section */}
-        <div className="flex flex-col gap-2">
-          <h3 className="text-xs uppercase text-slate-400 font-semibold mb-1">
-            Create Primitives
-          </h3>
-          <div className="flex gap-2">
-            <button
-              onClick={handleCreateBox}
-              title="Create Box"
-              className="bg-slate-700 hover:bg-blue-600 text-white px-3 py-2 rounded text-sm font-medium transition-colors duration-200 active:scale-95"
-            >
-              📦 Box
-            </button>
-            <button
-              onClick={handleCreateCone}
-              title="Create Cone"
-              className="bg-slate-700 hover:bg-blue-600 text-white px-3 py-2 rounded text-sm font-medium transition-colors duration-200 active:scale-95"
-            >
-              🔺 Cone
-            </button>
-            <button
-              onClick={handleCreateSphere}
-              title="Create Sphere"
-              className="bg-slate-700 hover:bg-blue-600 text-white px-3 py-2 rounded text-sm font-medium transition-colors duration-200 active:scale-95"
-            >
-              ⚪ Sphere
-            </button>
-            <button
-              onClick={handleCreateCylinder}
-              title="Create Cylinder"
-              className="bg-slate-700 hover:bg-blue-600 text-white px-3 py-2 rounded text-sm font-medium transition-colors duration-200 active:scale-95"
-            >
-              🥫 Cylinder
-            </button>
-            <button
-              onClick={handleCreateTorus}
-              title="Create Torus"
-              className="bg-slate-700 hover:bg-blue-600 text-white px-3 py-2 rounded text-sm font-medium transition-colors duration-200 active:scale-95"
-            >
-              🌀 Torus
-            </button>
-            <button
-              onClick={handleCreatePlane}
-              title="Create Plane"
-              className="bg-slate-700 hover:bg-blue-600 text-white px-3 py-2 rounded text-sm font-medium transition-colors duration-200 active:scale-95"
-            >
-              🗺️ Plane
-            </button>
-          </div>
-        </div>
+  // Tab definitions with their respective tool groups
+  type ButtonTool = {
+    type: "button";
+    label: string;
+    title?: string;
+    onClick: () => void;
+    disabled?: boolean;
+    active?: boolean;
+  };
+  type ToggleTool = {
+    type: "toggle";
+    label: string;
+    title?: string;
+    onClick: () => void;
+    active?: boolean;
+  };
+  type ColorTool = {
+    type: "color";
+    label: string;
+    title?: string;
+    disabled?: boolean;
+  };
+  type NumberTool = {
+    type: "number";
+    label: string;
+    title?: string;
+    value: number;
+    min?: number;
+    max?: number;
+    step?: number;
+    onChange: (v: number) => void;
+  };
+  type Tool = ButtonTool | ToggleTool | ColorTool | NumberTool;
+  type ToolGroup = { name: string; tools: Tool[] };
+  type Tab = { name: string; groups: ToolGroup[] };
 
-        {/* View Section */}
-        <div className="flex flex-col gap-2">
-          <h3 className="text-xs uppercase text-slate-400 font-semibold mb-1">View</h3>
-          <div className="flex gap-2">
-            <button
-              onClick={() => applyViewMode("wireframe")}
-              title="Wireframe View"
-              className={`px-3 py-2 rounded text-sm font-medium transition-colors duration-200 active:scale-95 ${
-                viewMode === "wireframe" ? "bg-indigo-600 hover:bg-indigo-700 text-white" : "bg-slate-700 hover:bg-blue-600 text-white"
-              }`}
-            >
-              🕸️ Wireframe
-            </button>
-
-            <button
-              onClick={() => applyViewMode("default")}
-              title="Default View"
-              className={`px-3 py-2 rounded text-sm font-medium transition-colors duration-200 active:scale-95 ${
-                viewMode === "default" ? "bg-indigo-600 hover:bg-indigo-700 text-white" : "bg-slate-700 hover:bg-blue-600 text-white"
-              }`}
-            >
-              🖼️ Default
-            </button>
-
-            <button
-              onClick={() => applyViewMode("realistic")}
-              title="Realistic View"
-              className={`px-3 py-2 rounded text-sm font-medium transition-colors duration-200 active:scale-95 ${
-                viewMode === "realistic" ? "bg-indigo-600 hover:bg-indigo-700 text-white" : "bg-slate-700 hover:bg-blue-600 text-white"
-              }`}
-            >
-              🎞️ Realistic
-            </button>
-          </div>
-        </div>
-
-        {/* Sketch Tools Section */}
-        <div className="flex flex-col gap-2">
-          <h3 className="text-xs uppercase text-slate-400 font-semibold mb-1">
-            Sketch Tools
-          </h3>
-          <div className="flex gap-2 items-center">
-            <button
-              onClick={() => handleToggleSketchMode("rectangle")}
-              className={`px-3 py-2 rounded text-sm font-medium transition-colors duration-200 active:scale-95 ${
-                mode === "SKETCH"
-                  ? "bg-green-600 hover:bg-green-700"
-                  : "bg-slate-700 hover:bg-blue-600"
-              }`}
-              title="Sketch Rectangle"
-            >
-              ▭ Rectangle
-            </button>
-            <button
-              onClick={() => handleToggleSketchMode("circle")}
-              className={`px-3 py-2 rounded text-sm font-medium transition-colors duration-200 active:scale-95 ${
-                mode === "SKETCH"
-                  ? "bg-green-600 hover:bg-green-700"
-                  : "bg-slate-700 hover:bg-blue-600"
-              }`}
-              title="Sketch Circle"
-            >
-              ⭕ Circle
-            </button>
-            <button
-              onClick={() => handleToggleSketchMode("triangle")}
-              className={`px-3 py-2 rounded text-sm font-medium transition-colors duration-200 active:scale-95 ${
-                mode === "SKETCH"
-                  ? "bg-green-600 hover:bg-green-700"
-                  : "bg-slate-700 hover:bg-blue-600"
-              }`}
-              title="Sketch Triangle"
-            >
-              🔺 Triangle
-            </button>
-            <button
-              onClick={() => setHollow((s) => !s)}
-              title="Toggle Hollow"
-              className={`px-2 py-1 rounded text-xs font-medium transition-colors duration-200 active:scale-95 ${
-                hollow ? "bg-yellow-600 hover:bg-yellow-700" : "bg-slate-700 hover:bg-blue-600"
-              }`}
-            >
-              {hollow ? "Hollow: On" : "Hollow: Off"}
-            </button>
-          </div>
-        </div>
-
-        {/* Transform Section */}
-        <div className="flex flex-col gap-2">
-          <h3 className="text-xs uppercase text-slate-400 font-semibold mb-1">
-            Transform (Shortcuts)
-          </h3>
-          <div className="flex gap-2 mb-2">
-            <button
-              onClick={handleUndo}
-              title="Undo (Ctrl+Z)"
-              className="bg-slate-700 hover:bg-blue-600 text-white px-3 py-2 rounded text-sm font-medium transition-colors duration-200 active:scale-95"
-            >
-              ↶ Undo
-            </button>
-            <button
-              onClick={handleRedo}
-              title="Redo (Ctrl+Y)"
-              className="bg-slate-700 hover:bg-blue-600 text-white px-3 py-2 rounded text-sm font-medium transition-colors duration-200 active:scale-95"
-            >
-              ↷ Redo
-            </button>
-            <button
-              onClick={handleClearAll}
-              title="Clear All"
-              className="bg-red-700 hover:bg-red-600 text-white px-3 py-2 rounded text-sm font-medium transition-colors duration-200 active:scale-95"
-            >
-              🗑️ Clear All
-            </button>
-            <button
-              onClick={handleDeleteSelected}
-              title="Delete Selected"
-              disabled={!selected?.object}
-              className={`px-3 py-2 rounded text-sm font-medium transition-colors duration-200 active:scale-95 ${
-                selected?.object ? "bg-red-600 hover:bg-red-500 text-white" : "bg-slate-600 text-gray-300 cursor-not-allowed"
-              }`}
-            >
-              🗑 Delete
-            </button>
-            <button
-              onClick={handleToggleVisibility}
-              title={selected?.object && selected.object.visible ? "Hide Selected" : "Show Selected"}
-              disabled={!selected?.object}
-              className={`px-3 py-2 rounded text-sm font-medium transition-colors duration-200 active:scale-95 ${
-                selected?.object ? "bg-slate-700 hover:bg-blue-600 text-white" : "bg-slate-600 text-gray-300 cursor-not-allowed"
-              }`}
-            >
-              {selected?.object && !selected.object.visible ? "👁️ Show" : "🚫 Hide"}
-            </button>
-          </div>
-          <div className="flex gap-2">
-            <button
-              onClick={() => handleTransformMode("translate")}
-              title="Move (T)"
-              className="bg-slate-700 hover:bg-blue-600 text-white px-3 py-2 rounded text-sm font-medium transition-colors duration-200 active:scale-95"
-            >
-              ↔️ Move
-            </button>
-            <button
-              onClick={() => handleTransformMode("rotate")}
-              title="Rotate (R)"
-              className="bg-slate-700 hover:bg-blue-600 text-white px-3 py-2 rounded text-sm font-medium transition-colors duration-200 active:scale-95"
-            >
-              🔄 Rotate
-            </button>
-            <button
-              onClick={() => handleTransformMode("scale")}
-              title="Scale (S)"
-              className="bg-slate-700 hover:bg-blue-600 text-white px-3 py-2 rounded text-sm font-medium transition-colors duration-200 active:scale-95"
-            >
-              ⤡ Scale
-            </button>
-            {/* Color picker for selected object */}
-            <input
-              type="color"
-              value={
-                selected?.object
-                  ? // try to read color from first mesh child
-                    (() => {
-                      const mesh = selected.object.children.find((c) => (c as any).isMesh) as THREE.Mesh | undefined;
-                      try {
-                        const mat = mesh?.material as any;
-                        return mat?.color ? `#${mat.color.getHexString()}` : "#ffffff";
-                      } catch (e) {
-                        return "#ffffff";
-                      }
-                    })()
-                  : "#ffffff"
+  const tabs: Record<string, Tab> = {
+    home: {
+      name: "Home",
+      groups: [
+        {
+          name: "Clipboard",
+          tools: [
+            { type: "button", label: "↶ Undo", title: "Undo (Ctrl+Z)", onClick: handleUndo },
+            { type: "button", label: "↷ Redo", title: "Redo (Ctrl+Y)", onClick: handleRedo },
+          ]
+        },
+        {
+          name: "Edit",
+          tools: [
+            { 
+              type: "button", 
+              label: "🗑️ Delete", 
+              title: "Delete Selected", 
+              onClick: handleDeleteSelected,
+              disabled: !selected?.object 
+            },
+            { 
+              type: "button", 
+              label: selected?.object && !selected.object.visible ? "👁️ Show" : "🚫 Hide", 
+              title: selected?.object && selected.object.visible ? "Hide Selected" : "Show Selected", 
+              onClick: handleToggleVisibility,
+              disabled: !selected?.object 
+            },
+          ]
+        },
+        {
+          name: "View",
+          tools: [
+            { 
+              type: "button", 
+              label: "🕸️ Wireframe", 
+              title: "Wireframe View", 
+              onClick: () => applyViewMode("wireframe"),
+              active: viewMode === "wireframe"
+            },
+            { 
+              type: "button", 
+              label: "🖼️ Default", 
+              title: "Default View", 
+              onClick: () => applyViewMode("default"),
+              active: viewMode === "default"
+            },
+            { 
+              type: "button", 
+              label: "🎞️ Realistic", 
+              title: "Realistic View", 
+              onClick: () => applyViewMode("realistic"),
+              active: viewMode === "realistic"
+            },
+          ]
+        }
+      ]
+    },
+    insert: {
+      name: "Insert",
+      groups: [
+        {
+          name: "Primitives",
+          tools: [
+            { type: "button", label: "📦 Box", title: "Create Box", onClick: handleCreateBox },
+            { type: "button", label: "🔺 Cone", title: "Create Cone", onClick: handleCreateCone },
+            { type: "button", label: "⚪ Sphere", title: "Create Sphere", onClick: handleCreateSphere },
+            { type: "button", label: "🥫 Cylinder", title: "Create Cylinder", onClick: handleCreateCylinder },
+            { type: "button", label: "🌀 Torus", title: "Create Torus", onClick: handleCreateTorus },
+            { type: "button", label: "🗺️ Plane", title: "Create Plane", onClick: handleCreatePlane },
+          ]
+        }
+      ]
+    },
+    sketch: {
+      name: "Sketch",
+      groups: [
+        {
+          name: "Sketch Tools",
+          tools: [
+            { 
+              type: "button", 
+              label: "▭ Rectangle", 
+              title: "Sketch Rectangle", 
+              onClick: () => handleToggleSketchMode("rectangle"),
+              active: mode === "SKETCH"
+            },
+            { 
+              type: "button", 
+              label: "⭕ Circle", 
+              title: "Sketch Circle", 
+              onClick: () => handleToggleSketchMode("circle"),
+              active: mode === "SKETCH"
+            },
+          ]
+        },
+        {
+          name: "Sketch Options",
+          tools: [
+            {
+              type: "toggle",
+              label: hollow ? "🕳️ Hollow On" : "⏺️ Hollow Off",
+              title: "Toggle Hollow",
+              active: hollow,
+              onClick: () => {
+                const next = !hollow;
+                setHollow(next);
+                if (sceneManager) sceneManager.sketchManager.setHollow(next);
               }
-              onChange={(e) => {
-                const hex = e.target.value;
-                const sel = useSceneStore.getState().selected;
-                if (!sel || !sel.object || !sceneManager) return;
-                const mesh = sel.object.children.find((c) => (c as any).isMesh) as THREE.Mesh | undefined;
-                if (!mesh) return;
-                const setColorOnMaterial = (mat: any) => {
-                  if (!mat) return;
-                  if (Array.isArray(mat)) {
-                    mat.forEach((m) => m?.color && m.color.set(hex));
-                  } else {
-                    mat?.color && mat.color.set(hex);
-                  }
-                };
+            },
+            {
+              type: "toggle",
+              label: snapToGrid ? "� Snap On" : "▫️ Snap Off",
+              title: "Toggle Snap-to-Grid",
+              active: snapToGrid,
+              onClick: () => toggleSnapToGrid()
+            },
+            {
+              type: "button",
+              label: `Grid Size: ${gridSize}`,
+              title: "Set grid size",
+              onClick: () => {},
+              // we'll render a number input for grid size instead of prompt via the 'number' tool below
+            }
+          ]
+        }
+      ]
+    },
+    transform: {
+      name: "Transform",
+      groups: [
+        {
+          name: "Transform Tools",
+          tools: [
+            { type: "button", label: "↔️ Move", title: "Move (T)", onClick: () => handleTransformMode("translate") },
+            { type: "button", label: "🔄 Rotate", title: "Rotate (R)", onClick: () => handleTransformMode("rotate") },
+            { type: "button", label: "⤡ Scale", title: "Scale (S)", onClick: () => handleTransformMode("scale") },
+          ]
+        },
+        {
+          name: "Properties",
+          tools: [
+            {
+              type: "color",
+              label: "Color",
+              title: selected?.object ? "Change selected color" : "No selection",
+              disabled: !selected?.object
+            }
+          ]
+        }
+      ]
+    },
+    file: {
+      name: "File",
+      groups: [
+        {
+          name: "Scene",
+          tools: [
+            { type: "button", label: "💾 Export", title: "Export Scene", onClick: handleExport },
+            { type: "button", label: "📂 Import", title: "Import Scene", onClick: () => fileInputRef.current?.click() },
+            { type: "button", label: "🗑️ Clear All", title: "Clear All", onClick: handleClearAll },
+          ]
+        }
+      ]
+    }
+  };
 
-                // update visible material
-                setColorOnMaterial(mesh.material as any);
+  const currentTab = tabs[activeTab as keyof typeof tabs];
 
-                // update stored original material so color persists after deselect
-                const origMap = (sceneManager.selectionManager as any).originalMaterials as
-                  | Map<string, any>
-                  | undefined;
-                if (origMap) {
-                  const orig = origMap.get(sel.object.uuid);
-                  if (orig) setColorOnMaterial(orig);
-                }
-              }}
-              disabled={!selected?.object}
-              title={selected?.object ? "Change selected color" : "No selection"}
-              className="ml-2 w-10 h-8 p-0 border-0 bg-transparent"
-            />
-          </div>
-        </div>
+  return (
+    <div className="bg-gray-900 border-b border-gray-300 shadow-sm">
+      {/* Tab Navigation */}
+      <div className="flex border-b border-gray-200">
+        {Object.entries(tabs).map(([key, tab]) => (
+          <button
+            key={key}
+            onClick={() => setActiveTab(key)}
+            className={`px-6 py-3 text-sm font-medium border-b-2 transition-colors duration-200 ${
+              activeTab === key
+                ? "border-blue-600 text-blue-600 bg-blue-50"
+                : "border-transparent text-gray-600 hover:text-gray-900 hover:bg-gray-50"
+            }`}
+          >
+            {tab.name}
+          </button>
+        ))}
+      </div>
 
-        {/* File Section */}
-        <div className="flex flex-col gap-2">
-          <h3 className="text-xs uppercase text-slate-400 font-semibold mb-1">
-            File
-          </h3>
-          <div className="flex gap-2">
-            <button
-              onClick={handleExport}
-              title="Export Scene"
-              className="bg-slate-700 hover:bg-blue-600 text-white px-3 py-2 rounded text-sm font-medium transition-colors duration-200 active:scale-95"
-            >
-              💾 Export JSON
-            </button>
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              title="Import Scene"
-              className="bg-slate-700 hover:bg-blue-600 text-white px-3 py-2 rounded text-sm font-medium transition-colors duration-200 active:scale-95"
-            >
-              📂 Import JSON
-            </button>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".json"
-              className="hidden"
-              onChange={handleImport}
-            />
-          </div>
+      {/* Tool Groups */}
+      <div className="px-4 py-3 bg-gray-50 min-h-[72px]">
+        <div className="flex items-center gap-8">
+          {currentTab.groups.map((group, index) => (
+            <div key={index} className="flex items-center gap-4">
+              {/* Group separator */}
+              {index > 0 && (
+                <div className="w-px h-8 bg-gray-300"></div>
+              )}
+              
+              {/* Group label and tools */}
+              <div className="flex items-center gap-3">
+                <span className="text-xs text-gray-500 font-medium whitespace-nowrap">
+                  {group.name}
+                </span>
+                <div className="flex gap-1">
+                  {group.tools.map((tool, toolIndex) => (
+                    <div key={toolIndex}>
+                      {tool.type === "button" && (
+                        <button
+                          onClick={tool.onClick}
+                          disabled={tool.disabled}
+                          title={tool.title}
+                          className={`px-3 py-2 text-sm rounded transition-colors duration-200 flex items-center gap-2 min-w-[80px] justify-center ${
+                            tool.active
+                              ? "bg-blue-100 text-blue-700 border border-blue-200"
+                              : tool.disabled
+                              ? "text-gray-400 cursor-not-allowed bg-gray-100"
+                              : "text-gray-700 hover:bg-gray-200 hover:text-gray-900 bg-white border border-gray-300"
+                          }`}
+                        >
+                          {tool.label}
+                        </button>
+                      )}
+                      
+                      {tool.type === "toggle" && (
+                        <button
+                          onClick={tool.onClick}
+                          title={tool.title}
+                          className={`px-3 py-2 text-sm rounded transition-colors duration-200 flex items-center gap-2 min-w-[100px] justify-center ${
+                            tool.active
+                              ? "bg-green-100 text-green-700 border border-green-200"
+                              : "text-gray-700 hover:bg-gray-200 hover:text-gray-900 bg-white border border-gray-300"
+                          }`}
+                        >
+                          {tool.label}
+                        </button>
+                      )}
+                      
+                      {tool.type === "color" && (
+                        <input
+                          type="color"
+                          value={
+                            selected?.object
+                              ? (() => {
+                                  const mesh = selected.object.children.find((c) => (c as any).isMesh) as THREE.Mesh | undefined;
+                                  try {
+                                    const mat = mesh?.material as any;
+                                    return mat?.color ? `#${mat.color.getHexString()}` : "#3b82f6";
+                                  } catch (e) {
+                                    return "#3b82f6";
+                                  }
+                                })()
+                              : "#3b82f6"
+                          }
+                          onChange={(e) => {
+                            const hex = e.target.value;
+                            const sel = useSceneStore.getState().selected;
+                            if (!sel || !sel.object || !sceneManager) return;
+                            const mesh = sel.object.children.find((c) => (c as any).isMesh) as THREE.Mesh | undefined;
+                            if (!mesh) return;
+                            const setColorOnMaterial = (mat: any) => {
+                              if (!mat) return;
+                              if (Array.isArray(mat)) {
+                                mat.forEach((m) => m?.color && m.color.set(hex));
+                              } else {
+                                mat?.color && mat.color.set(hex);
+                              }
+                            };
+
+                            setColorOnMaterial(mesh.material as any);
+
+                            const origMap = (sceneManager.selectionManager as any).originalMaterials as
+                              | Map<string, any>
+                              | undefined;
+                            if (origMap) {
+                              const orig = origMap.get(sel.object.uuid);
+                              if (orig) setColorOnMaterial(orig);
+                            }
+                          }}
+                          disabled={tool.disabled}
+                          title={tool.title}
+                          className="w-10 h-10 rounded border border-gray-300 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed hover:border-gray-400 transition-colors duration-200"
+                        />
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          ))}
         </div>
       </div>
+
+      {/* Hidden file input for import */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".json"
+        className="hidden"
+        onChange={handleImport}
+      />
     </div>
   );
 };
