@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { OrbitControls } from "three-stdlib";
-import { ShapeFactory } from "./ShapeFactory";
+// ShapeFactory not required for flat 2D sketch shapes
 
 export class SketchManager {
   private scene: THREE.Scene;
@@ -196,18 +196,28 @@ export class SketchManager {
       }
     }
 
-    // Thin extrude for 2D shapes so they are not thick 3D objects
-    const thinDepth = 0.2;
-    const extrudeSettings: THREE.ExtrudeGeometryOptions = {
-      depth: thinDepth,
-      bevelEnabled: false,
-    };
+    // Create a flat 2D mesh (ShapeGeometry) instead of an extruded 3D object.
+    // This produces a proper 2D rectangle/circle lying on the sketch plane.
+    const geometry = new THREE.ShapeGeometry(shape);
+    const material = new THREE.MeshStandardMaterial({
+      color: 0x999999,
+      side: THREE.DoubleSide,
+    });
+    const mesh = new THREE.Mesh(geometry, material);
+    // Lay flat on XZ plane (shape is created in XY plane)
+    mesh.rotation.x = -Math.PI / 2;
 
-    const extrudedShape = ShapeFactory.createExtrudedShape(shape, extrudeSettings);
-    extrudedShape.position.set((start.x + end.x) / 2, thinDepth / 2, (start.z + end.z) / 2);
-    extrudedShape.rotation.x = -Math.PI / 2;
+    // Position the mesh to match the preview behavior
+    if (this.currentTool === "rectangle") {
+      mesh.position.set((start.x + end.x) / 2, 0.01, (start.z + end.z) / 2);
+    } else {
+      // circle: center at start
+      mesh.position.set(start.x, 0.01, start.z);
+    }
 
-    return extrudedShape;
+    const group = new THREE.Group();
+    group.add(mesh);
+    return group;
   }
 
   // Public API to control grid snapping
